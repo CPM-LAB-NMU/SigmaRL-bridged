@@ -242,7 +242,7 @@ If you use this repository, please consider to cite our papers.
 
 ### 1. SigmaRL
 <div>
-Jianye Xu, Pan Hu, and Bassam Alrifaee, "SigmaRL: A Sample-Efficient and Generalizable Multi-Agent Reinforcement Learning Framework for Motion Planning," <i>2024 IEEE 27th International Conference on Intelligent Transportation Systems (ITSC), Edmonton, AB, Canada, 2024, pp. 768-775, doi: 10.1109/ITSC58415.2024.10919918</i>.
+Jianye Xu, Pan Hu, and Bassam Alrifaee, "SigmaRL: A Sample-Efficient and Generalizable Multi-Agent Reinforcement Learning Framework for Motion Planning," <i>2024 IEEE 27th International Conference on Intelligent Transportation Systems (ITSC), 2024</i>.
 
 <a href="https://doi.org/10.48550/arXiv.2408.07644" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> <a href="https://youtu.be/tzaVjol4nhA" target="_blank"><img src="https://img.shields.io/badge/-Video-FF0000?logo=YouTube"></a> [![Jump to Fig. 1](https://img.shields.io/badge/Jump%20to-Fig.%201-blue)](#fig-generalization) <a href="https://github.com/bassamlab/SigmaRL/tree/1.2.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
 </div>
@@ -255,7 +255,6 @@ Jianye Xu, Pan Hu, and Bassam Alrifaee, "SigmaRL: A Sample-Efficient and General
     author = {Xu, Jianye and Hu, Pan and Alrifaee, Bassam},
     year = {2024},
     pages = {768--775},
-    issn = {2153-0017},
     doi = {10.1109/ITSC58415.2024.10919918}
   }
   ```
@@ -297,19 +296,20 @@ Jianye Xu, Omar Sobhy, and Bassam Alrifaee, "XP-MARL: Auxiliary Prioritization i
 
 ### 3. MTV-Based CBF
 <div>
-Jianye Xu and Bassam Alrifaee, "Learning-Based Control Barrier Function with Provably Safe Guarantees: Reducing Conservatism with Heading-Aware Safety Margin," <i>In European Control Conference (ECC), in press</i>, 2024.
+Xu, Jianye, and Bassam Alrifaee. “A Learning-Based Control Barrier Function for Car-Like Robots: Toward Less Conservative Collision Avoidance.” European Control Conference (ECC), 2025.
 
 <a href="https://doi.org/10.48550/arXiv.2411.08999" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"> </a>[![Jump to Fig. 3](https://img.shields.io/badge/Jump%20to-Fig.%203-blue)](#fig-mtv-based-cbf)
 </div>
 
 - **BibTeX**
   ```bibtex
-  @inproceedings{xu2024learningbased,
-    title = {Learning-Based Control Barrier Function with Provably Safe Guarantees: Reducing Conservatism with Heading-Aware Safety Margin},
-    shorttitle = {Learning-Based Control Barrier Function with Provably Safe Guarantees},
-    booktitle = {European Control Conference (ECC), in Press},
+  @inproceedings{xu2025learningbased,
+    title = {A Learning-Based Control Barrier Function for Car-Like Robots: Toward Less Conservative Collision Avoidance},
+    booktitle = {2025 European Control Conference (ECC)},
     author = {Xu, Jianye and Alrifaee, Bassam},
-    year = {2025},
+    year = 2025,
+    pages = {988--995},
+    doi = {10.23919/ECC65951.2025.11187043}
   }
   ```
 
@@ -342,18 +342,18 @@ Jianye Xu and Bassam Alrifaee, "High-Order Control Barrier Functions: Insights a
 
 ### 5. CBF-Based Safety Filter
 <div>
-Jianye Xu, Chang Che, and Bassam Alrifaee, "A Real-Time Control Barrier Function-Based Safety Filter for Motion Planning with Arbitrary Road Boundary Constraints," <i>arXiv preprint arXiv:2505.02395</i>, 2025.
+Jianye Xu, Chang Che, and Bassam Alrifaee, "A Real-Time Control Barrier Function-Based Safety Filter for Motion Planning with Arbitrary Road Boundary Constraints," <i>IEEE 28th International Conference on Intelligent Transportation Systems (ITSC), in Press</i>, 2025.
 
 <a href="https://arxiv.org/abs/2505.02395" target="_blank"><img src="https://img.shields.io/badge/-Preprint-b31b1b?logo=arXiv"></a> [![Jump to Fig. 5](https://img.shields.io/badge/Jump%20to-Fig.%205-blue)](#fig-safety-filter) <a href="https://github.com/bassamlab/SigmaRL/tree/1.4.0" target="_blank"><img src="https://img.shields.io/badge/-GitHub-181717?logo=GitHub"></a>
 </div>
 
 - **BibTeX**
   ```bibtex
-  @article{xu2025realtime,
+  @inproceedings{xu2025realtime,
     title = {A Real-Time Control Barrier Function-Based Safety Filter for Motion Planning with Arbitrary Road Boundary Constraints},
+    booktitle = {2025 IEEE 28th International Conference on Intelligent Transportation Systems (ITSC), in Press},
     author = {Xu, Jianye and Che, Chang and Alrifaee, Bassam},
-    journal = {arXiv preprint arXiv:2505.02395},
-    year = {2025},
+    year = 2025
   }
   ```
 
