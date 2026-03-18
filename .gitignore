@@ -166,3 +166,11 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/linux,macos,windows,visualstudiocode
+
+# Java / Maven (java-client/)
+java-client/target/
+java-client/.mvn/
+java-client/*.class
+
+# gRPC generated Python stubs are committed intentionally —
+# regenerate with: bash scripts/generate_proto.sh

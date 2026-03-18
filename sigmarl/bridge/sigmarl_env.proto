@@ -1,0 +1,114 @@
+syntax = "proto3";
+
+package sigmarl;
+
+option java_package = "io.sigmarl.bridge";
+option java_outer_classname = "SigmaRLProto";
+option java_multiple_files = true;
+
+// ── Service ───────────────────────────────────────────────────────────────────
+
+service SigmaRLEnv {
+  // Introspect the configured environment.
+  rpc GetSpaces      (Empty) returns (SpacesInfo);
+  // Total number of scalar policy parameters (for EA weight vectors).
+  rpc GetWeightCount (Empty) returns (WeightCountInfo);
+
+  // (Re-)configure the scenario.  Must be called before Reset/Step if the
+  // default config (intersection_1, 4 agents, 1 env, cpu) is not suitable.
+  rpc Configure (ScenarioConfig) returns (Ack);
+
+  // Reset the environment.  Returns the initial observations.
+  rpc Reset (ResetRequest) returns (StepResponse);
+
+  // Advance one timestep.  Java supplies actions, Python returns next state.
+  rpc Step (StepRequest) returns (StepResponse);
+
+  // EA mode: load a flat weight vector, run n_episodes, return fitness.
+  // Java owns the learning loop; Python just evaluates.
+  rpc EvaluateWeights (EvaluateRequest) returns (EvaluateResponse);
+}
+
+// ── Shared ────────────────────────────────────────────────────────────────────
+
+message Empty {}
+
+message Ack {
+  bool   success = 1;
+  string message = 2;
+}
+
+// ── Introspection ─────────────────────────────────────────────────────────────
+
+message SpacesInfo {
+  int32 n_agents   = 1;
+  int32 n_envs     = 2;  // VMAS parallel environments
+  int32 obs_dim    = 3;  // per-agent observation size
+  int32 action_dim = 4;  // per-agent action size
+  // Bounds, length == action_dim
+  repeated float action_low  = 5;
+  repeated float action_high = 6;
+}
+
+message WeightCountInfo {
+  int64 n_weights = 1;
+}
+
+// ── Configuration ─────────────────────────────────────────────────────────────
+
+message ScenarioConfig {
+  // Scenario name — one of the keys in sigmarl/constants.py SCENARIOS dict.
+  // Leave empty to keep the current value.
+  string scenario_type = 1;
+  int32  n_agents      = 2;
+  // Number of VMAS parallel environments.  More = faster EA fitness evaluation.
+  int32  n_envs        = 3;
+  int32  max_steps     = 4;
+  // "cpu" or "cuda"
+  string device        = 5;
+  int32  random_seed   = 6;
+  bool   is_partial_observation = 7;
+  bool   is_ego_view            = 8;
+}
+
+// ── Reset / Step ──────────────────────────────────────────────────────────────
+
+message ResetRequest {
+  // Optional seed override; 0 means use the configured random_seed.
+  int32 seed = 1;
+}
+
+message StepRequest {
+  // Flat row-major array: [n_envs * n_agents * action_dim]
+  repeated float actions = 1;
+}
+
+message StepResponse {
+  // Flat row-major: [n_envs * n_agents * obs_dim]
+  repeated float observations = 1;
+  // Flat: [n_envs * n_agents]
+  repeated float rewards      = 2;
+  // Per-env done flag: [n_envs]
+  repeated bool  dones        = 3;
+  // Shape metadata (constant after Configure; included for convenience)
+  int32 n_envs   = 4;
+  int32 n_agents = 5;
+  int32 obs_dim  = 6;
+}
+
+// ── EA evaluation ─────────────────────────────────────────────────────────────
+
+message EvaluateRequest {
+  // Flat policy weight vector — must match GetWeightCount().n_weights.
+  repeated float weights    = 1;
+  int32          n_episodes = 2;
+  // Optional: override scenario config for this evaluation only.
+  ScenarioConfig config     = 3;
+}
+
+message EvaluateResponse {
+  // Per-episode cumulative reward (summed over all agents and timesteps).
+  repeated float episode_rewards = 1;
+  float mean_reward = 2;
+  float std_reward  = 3;
+}
