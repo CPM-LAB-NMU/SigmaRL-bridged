@@ -150,6 +150,12 @@ class EnvAdapter:
             actions_flat, dtype=torch.float32, device=self._params.device
         ).reshape(self._n_envs, self._n_agents, self._action_dim)
 
+        # Clip to valid physical range so out-of-bound values from any client
+        # don't crash VMAS (e.g. a Java network outputting raw tanh values).
+        low  = torch.tensor(self._action_low,  device=self._params.device)
+        high = torch.tensor(self._action_high, device=self._params.device)
+        actions = torch.clamp(actions, low, high)
+
         self._td[self._env.action_key] = actions
         self._td = self._env.step(self._td)
 
