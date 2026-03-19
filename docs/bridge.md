@@ -39,18 +39,6 @@ SigmaRL trains multi-agent RL policies in Python using PyTorch and VMAS. The dep
 
 The goal of this bridge is to let a supervisor define **neural network architectures** and **evolutionary algorithms** in Java (or any other language) while reusing the full SigmaRL simulation stack — scenarios, observations, reward shaping, CBF safety filters, and vectorised parallel environments — without reimplementing any of it.
 
-### Why gRPC and not rosbridge?
-
-rosbridge is designed for ROS2 topic communication. The training pipeline does not use ROS2 at all; adding it just to bridge a training client would introduce a large, unnecessary dependency. rosbridge remains the right tool for the *deployment* side (connecting trained policies to the ROS2 lab stack), but for training it is the wrong abstraction.
-
-gRPC was chosen because:
-
-- Strong typing via protobuf (not stringly-typed JSON)
-- Efficient binary serialisation of float arrays (weight vectors, observations, actions)
-- First-class Java support via `grpc-java`
-- Trivially extensible to any language that has a gRPC implementation
-- The same server can later coexist with a rosbridge deployment node without conflict
-
 ---
 
 ## Architecture
