@@ -1123,7 +1123,7 @@ class ScenarioRoadTraffic(BaseScenario):
             # Reset single agent
             agents_reset = (
                 self.world_state.collisions.with_agents.any(dim=-1)
-                # | self.world_state.collisions.with_lanelets
+                | self.world_state.collisions.with_lanelets
                 | self.world_state.collisions.with_entry_segments
                 | self.world_state.collisions.with_exit_segments
             )
@@ -1137,7 +1137,7 @@ class ScenarioRoadTraffic(BaseScenario):
             is_done = (
                 is_max_steps_reached
                 | is_collision_with_agents
-                # | is_collision_with_lanelets  # TODO: enable this line if you are training a model
+                | is_collision_with_lanelets
                 | is_fixed_duration_reset
             )
             if (
