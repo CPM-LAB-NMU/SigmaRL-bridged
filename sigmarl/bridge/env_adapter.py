@@ -237,7 +237,11 @@ class EnvAdapter:
         obs = next_td[("agents", "observation")]          # [n_envs, n_agents, obs_dim]
         rewards = next_td[self._env.reward_key].squeeze(-1)  # [n_envs, n_agents]
 
-        done_td = next_td.get("done", next_td.get("terminated"))
+        done_td = next_td.get("done")
+        if done_td is None:
+            done_td = next_td.get("terminated")
+        if done_td is None:
+            done_td = next_td.get("truncated")
         if done_td is not None:
             dones = done_td.squeeze(-1).flatten().tolist()
         else:
@@ -346,9 +350,13 @@ class EnvAdapter:
         self._td[self._env.action_key] = actions
         self._td = self._env.step(self._td)
 
-        next_td  = self._td["next"]
-        done_td  = next_td.get("done", next_td.get("terminated"))
-        dones    = done_td.squeeze(-1).flatten().tolist() if done_td is not None else [False] * self._n_envs
+        next_td = self._td["next"]
+        done_td = next_td.get("done")
+        if done_td is None:
+            done_td = next_td.get("terminated")
+        if done_td is None:
+            done_td = next_td.get("truncated")
+        dones = done_td.squeeze(-1).flatten().tolist() if done_td is not None else [False] * self._n_envs
 
         self._td = step_mdp(self._td)
 
@@ -388,7 +396,11 @@ class EnvAdapter:
                 reward = td["next"][self._env.reward_key].sum().item()
                 total_reward += reward
 
-                done_td = td["next"].get("done", td["next"].get("terminated"))
+                done_td = td["next"].get("done")
+                if done_td is None:
+                    done_td = td["next"].get("terminated")
+                if done_td is None:
+                    done_td = td["next"].get("truncated")
                 done = bool(done_td.any().item()) if done_td is not None else False
                 td = step_mdp(td)
 

@@ -1,31 +1,31 @@
 package io.sigmarl.bridge.example;
 
-import io.sigmarl.bridge.PhysicalStepResponse;
 import io.sigmarl.bridge.ScenarioConfig;
 import io.sigmarl.bridge.SigmaRLClient;
 import io.sigmarl.bridge.SpacesInfo;
-import io.sigmarl.bridge.VehicleStateMsg;
+import io.sigmarl.bridge.StepResponse;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.Random;
 
 /**
- * Genetic Algorithm demo using the <b>physical state interface</b> with a
- * fully <b>student-defined fitness function</b>.
+ * Genetic Algorithm demo with a <b>student-defined fitness function</b>.
  *
  * <p>This example deliberately uses a fitness metric that has nothing to do
  * with the simulator's internal reward signal: it measures
- * <em>survival time</em> — how many timesteps all agents remain active before
- * the episode ends.  Students are free to replace {@link #computeFitness} with
- * any function of the physical state (position, speed, heading, distance
- * travelled, etc.).
+ * <em>survival time</em> — how many timesteps the episode runs before any
+ * environment signals done.  A controller that avoids all collisions and
+ * stays on the map for all 128 steps scores the maximum.
+ *
+ * <p>Students are free to replace {@link #computeFitness} with any scalar
+ * derived from the {@code StepResponse} (observations, rewards, step count,
+ * etc.).
  *
  * <p>Contrast with {@link ExampleEvolutionaryRobotics}:
  * <ul>
- *   <li>{@link ExampleEvolutionaryRobotics} — (μ,λ)-ES, fitness = speed sum.</li>
- *   <li>This class — GA with elite carry-over + crossover, fitness = survival
- *       time.  Two different algorithm choices, two different fitness
- *       definitions, both running against the same simulator.</li>
+ *   <li>{@link ExampleEvolutionaryRobotics} — (μ,λ)-ES, fitness = cumulative reward.</li>
+ *   <li>This class — GA with elite carry-over + crossover, fitness = survival time.</li>
  * </ul>
  *
  * <p>Run after starting the Python server:
@@ -41,14 +41,7 @@ public class ExampleEA {
     private static final int    GENERATIONS  = 30;
     private static final int    ELITE_K      = 4;    // individuals carried unchanged
     private static final double MUTATION_STD = 0.05;
-    private static final int    HIDDEN_DIM   = 32;
-
-    // ── Physical dimensions (same vehicle as ExampleEvolutionaryRobotics) ─
-    private static final int   STATE_DIM  = 4;   // [x, y, heading, speed]
-    private static final int   ACTION_DIM = 2;   // [speed, curvature]
-    private static final float MIN_SPEED  = -0.5f;
-    private static final float MAX_SPEED  =  1.0f;
-    private static final float MAX_CURV   =  4.0f;
+    private static final int    HIDDEN_DIM   = 64;
 
     public static void main(String[] args) throws Exception {
         // Usage: [host] [port] [--render | --save-video PATH]
@@ -74,16 +67,21 @@ public class ExampleEA {
                     "intersection_1", 4, /*n_envs=*/1, /*max_steps=*/128, "cpu");
             client.configure(cfg);
 
-            SpacesInfo spaces = client.getSpaces();
-            int nAgents = spaces.getNAgents();
+            SpacesInfo spaces    = client.getSpaces();
+            int   nAgents   = spaces.getNAgents();
+            int   nEnvs     = spaces.getNEnvs();
+            int   obsDim    = spaces.getObsDim();
+            int   actionDim = spaces.getActionDim();
+            float[] actionLow  = toFloatArray(spaces.getActionLowList());
+            float[] actionHigh = toFloatArray(spaces.getActionHighList());
 
-            System.out.printf("Environment: %d agents%n", nAgents);
+            System.out.printf("Environment: %d agents | obs_dim=%d%n", nAgents, obsDim);
             System.out.printf("Fitness: survival time (steps completed)%n%n");
 
             Random rng  = new Random(42);
-            Network net = new Network(STATE_DIM, ACTION_DIM, HIDDEN_DIM);
+            Network net = new Network(obsDim, actionDim, HIDDEN_DIM, actionLow, actionHigh);
 
-            int       nWeights  = net.weightCount();
+            int       nWeights   = net.weightCount();
             float[][] population = randomPopulation(POPULATION, nWeights, rng);
             float[]   fitness    = new float[POPULATION];
 
@@ -92,7 +90,7 @@ public class ExampleEA {
                 // ── evaluate ────────────────────────────────────────────────
                 for (int i = 0; i < POPULATION; i++) {
                     net.loadWeights(population[i]);
-                    fitness[i] = runEpisode(client, net, nAgents);
+                    fitness[i] = runEpisode(client, net, nAgents, nEnvs, actionDim);
                 }
 
                 int[] ranking     = argsort(fitness);
@@ -128,7 +126,7 @@ public class ExampleEA {
                 System.out.printf("%nReplaying best individual (fitness=%.1f steps) ...%n",
                         fitness[ranking[POPULATION - 1]]);
                 client.setRenderMode(renderMode);
-                runEpisode(client, net, nAgents);
+                runEpisode(client, net, nAgents, nEnvs, actionDim);
                 client.setRenderMode("");
                 if ("rgb_array".equals(renderMode) && videoPath != null) {
                     client.saveVideo(videoPath);
@@ -140,33 +138,26 @@ public class ExampleEA {
 
     // ── Episode rollout ───────────────────────────────────────────────────
 
-    private static float runEpisode(SigmaRLClient client, Network net, int nAgents) {
-        PhysicalStepResponse state = client.resetPhysical();
+    private static float runEpisode(SigmaRLClient client, Network net,
+                                     int nAgents, int nEnvs, int actionDim) {
+        StepResponse state = client.reset();
         float totalFitness = 0f;
 
-        while (!SigmaRLClient.anyDonePhysical(state)) {
-            int[]   ids        = new int[nAgents];
-            float[] speeds     = new float[nAgents];
-            float[] curvatures = new float[nAgents];
-
-            for (int a = 0; a < nAgents; a++) {
-                VehicleStateMsg s = SigmaRLClient.agentState(state, a);
-                float[] input = {
-                    (float) s.getX(),
-                    (float) s.getY(),
-                    (float) s.getHeading(),
-                    (float) s.getSpeed()
-                };
-                float[] action = net.forward(input);
-                ids[a]        = s.getVehicleId();
-                speeds[a]     = action[0];
-                curvatures[a] = action[1];
+        while (!SigmaRLClient.anyDone(state)) {
+            float[] actions = new float[nEnvs * nAgents * actionDim];
+            for (int env = 0; env < nEnvs; env++) {
+                for (int a = 0; a < nAgents; a++) {
+                    float[] obs    = SigmaRLClient.agentObs(state, env, a);
+                    float[] action = net.forward(obs);
+                    System.arraycopy(action, 0, actions,
+                            (env * nAgents + a) * actionDim, actionDim);
+                }
             }
 
-            state = client.stepPhysical(ids, speeds, curvatures);
+            state = client.step(actions);
 
             // ── fitness function ──────────────────────────────────────────
-            totalFitness += computeFitness(state, nAgents);
+            totalFitness += computeFitness(state);
         }
         return totalFitness;
     }
@@ -174,23 +165,17 @@ public class ExampleEA {
     /**
      * Fitness contribution from one timestep: <b>survival time</b>.
      *
-     * <p>Each timestep all agents are still active contributes 1.0 to fitness.
+     * <p>Returns 1.0 each timestep the episode is still running.
      * An episode that runs to the maximum step limit scores higher than one
      * that ends early (e.g. due to collision or leaving the map).
      *
-     * <p>Students: replace this with any function of the physical state.
-     * The {@code PhysicalStepResponse} gives {@code x, y, heading, speed}
-     * for every agent at every timestep — use whatever makes sense for your
-     * control objective.
+     * <p>Students: replace this with any scalar derived from the
+     * {@code StepResponse}.  Use {@link SigmaRLClient#agentObs} to read
+     * individual observation vectors, or {@link SigmaRLClient#agentReward}
+     * to use the simulator's built-in reward instead of step count.
      */
-    private static float computeFitness(PhysicalStepResponse resp, int nAgents) {
-        // +1 for every agent still in the episode this step
-        float alive = 0f;
-        for (int a = 0; a < nAgents; a++) {
-            VehicleStateMsg s = SigmaRLClient.agentState(resp, a);
-            if (s.getSpeed() >= 0f) alive += 1f;  // basic liveness check
-        }
-        return alive;
+    private static float computeFitness(StepResponse resp) {
+        return 1f;  // +1 for every step the episode is still alive
     }
 
     // ── GA helpers ────────────────────────────────────────────────────────
@@ -237,6 +222,12 @@ public class ExampleEA {
         return s / arr.length;
     }
 
+    private static float[] toFloatArray(List<Float> list) {
+        float[] arr = new float[list.size()];
+        for (int i = 0; i < list.size(); i++) arr[i] = list.get(i);
+        return arr;
+    }
+
     // ── Neural network (fully in Java) ────────────────────────────────────
     //
     // Identical architecture to ExampleEvolutionaryRobotics.Network.
@@ -247,14 +238,15 @@ public class ExampleEA {
         private float[]     weights;
 
         private final int offW1, offB1, offW2, offB2;
+        private final float[] outLow, outHigh;
 
-        private static final float[] OUT_LOW  = { MIN_SPEED, -MAX_CURV };
-        private static final float[] OUT_HIGH = { MAX_SPEED,  MAX_CURV };
-
-        Network(int inputDim, int outputDim, int hiddenDim) {
+        Network(int inputDim, int outputDim, int hiddenDim,
+                float[] outLow, float[] outHigh) {
             this.inputDim  = inputDim;
             this.hiddenDim = hiddenDim;
             this.outputDim = outputDim;
+            this.outLow    = outLow;
+            this.outHigh   = outHigh;
 
             offW1 = 0;
             offB1 = offW1 + hiddenDim * inputDim;
@@ -273,12 +265,12 @@ public class ExampleEA {
 
         void loadWeights(float[] w) { this.weights = w; }
 
-        float[] forward(float[] state) {
+        float[] forward(float[] obs) {
             float[] hidden = new float[hiddenDim];
             for (int h = 0; h < hiddenDim; h++) {
                 float sum = weights[offB1 + h];
                 for (int i = 0; i < inputDim; i++) {
-                    sum += weights[offW1 + h * inputDim + i] * state[i];
+                    sum += weights[offW1 + h * inputDim + i] * obs[i];
                 }
                 hidden[h] = (float) Math.tanh(sum);
             }
@@ -290,7 +282,7 @@ public class ExampleEA {
                     sum += weights[offW2 + o * hiddenDim + h] * hidden[h];
                 }
                 float t = (float) Math.tanh(sum);
-                out[o] = OUT_LOW[o] + (t + 1f) * 0.5f * (OUT_HIGH[o] - OUT_LOW[o]);
+                out[o] = outLow[o] + (t + 1f) * 0.5f * (outHigh[o] - outLow[o]);
             }
             return out;
         }
