@@ -9,13 +9,16 @@ Start with:
 from __future__ import annotations
 
 import logging
+import queue
 import sys
+import threading
 from concurrent import futures
 
 import grpc
 
 # Generated stubs (run scripts/generate_proto.sh first)
 from sigmarl.bridge import sigmarl_env_pb2, sigmarl_env_pb2_grpc
+import sigmarl.bridge.env_adapter as _adapter_mod
 from sigmarl.bridge.env_adapter import EnvAdapter
 
 log = logging.getLogger(__name__)
@@ -32,6 +35,7 @@ def _config_from_proto(proto_cfg) -> dict:
         "random_seed":   proto_cfg.random_seed,
         "is_partial_observation": proto_cfg.is_partial_observation,
         "is_ego_view":            proto_cfg.is_ego_view,
+        "render_mode":   proto_cfg.render_mode or "",
     }
 
 
@@ -63,13 +67,17 @@ class SigmaRLServicer(sigmarl_env_pb2_grpc.SigmaRLEnvServicer):
 
     def Configure(self, request, context):
         try:
-            self._adapter = EnvAdapter(_config_from_proto(request))
+            cfg = _config_from_proto(request)
+            self._adapter = EnvAdapter(cfg)
+            if cfg["render_mode"]:
+                self._adapter.set_render_mode(cfg["render_mode"])
+                log.info("Rendering enabled: mode=%s", cfg["render_mode"])
             return sigmarl_env_pb2.Ack(success=True, message="Environment configured")
         except Exception as exc:
             log.exception("Configure failed")
             return sigmarl_env_pb2.Ack(success=False, message=str(exc))
 
-    # ------------------------------------------------------------ reset / step
+    # ------------------------------------------------------------ reset / step (ML interface)
 
     def Reset(self, request, context):
         r = self._adapter.reset(seed=request.seed)
@@ -78,6 +86,51 @@ class SigmaRLServicer(sigmarl_env_pb2_grpc.SigmaRLEnvServicer):
     def Step(self, request, context):
         r = self._adapter.step(list(request.actions))
         return sigmarl_env_pb2.StepResponse(**r)
+
+    # ------------------------------------------------------------ video / render
+
+    def SetRenderMode(self, request, context):
+        try:
+            self._adapter.set_render_mode(request.mode)
+            msg = f"Render mode set to '{request.mode}'"
+            if request.mode:
+                log.info(msg)
+            return sigmarl_env_pb2.Ack(success=True, message=msg)
+        except Exception as exc:
+            log.exception("SetRenderMode failed")
+            return sigmarl_env_pb2.Ack(success=False, message=str(exc))
+
+    def SaveVideo(self, request, context):
+        try:
+            self._adapter.save_video(request.path)
+            return sigmarl_env_pb2.Ack(success=True, message=f"Video saved to {request.path}.mp4")
+        except Exception as exc:
+            log.exception("SaveVideo failed")
+            return sigmarl_env_pb2.Ack(success=False, message=str(exc))
+
+    # ------------------------------------------------------------ physical interface
+
+    def ResetPhysical(self, request, context):
+        r = self._adapter.reset_physical(seed=request.seed)
+        return sigmarl_env_pb2.PhysicalStepResponse(
+            states=[sigmarl_env_pb2.VehicleStateMsg(**{k: v for k, v in s.items() if k != "env_idx"})
+                    for s in r["states"]],
+            dones=r["dones"],
+            n_envs=r["n_envs"],
+        )
+
+    def StepPhysical(self, request, context):
+        commands = [
+            {"vehicle_id": cmd.vehicle_id, "speed": cmd.speed, "curvature": cmd.curvature}
+            for cmd in request.commands
+        ]
+        r = self._adapter.step_physical(commands)
+        return sigmarl_env_pb2.PhysicalStepResponse(
+            states=[sigmarl_env_pb2.VehicleStateMsg(**{k: v for k, v in s.items() if k != "env_idx"})
+                    for s in r["states"]],
+            dones=r["dones"],
+            n_envs=r["n_envs"],
+        )
 
     # ------------------------------------------------------------ EA
 
@@ -97,13 +150,33 @@ class SigmaRLServicer(sigmarl_env_pb2_grpc.SigmaRLEnvServicer):
         return sigmarl_env_pb2.EvaluateResponse(**r)
 
 
-def serve(port: int = 50051, max_workers: int = 4) -> None:
+def serve(port: int = 50051, max_workers: int = 1) -> None:
+    # Install the main-thread render queue so worker threads delegate SDL/pygame
+    # calls here instead of crashing on macOS (SDL requires the main thread).
+    render_queue: queue.Queue = queue.Queue()
+    _adapter_mod._RENDER_QUEUE = render_queue
+
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
     sigmarl_env_pb2_grpc.add_SigmaRLEnvServicer_to_server(SigmaRLServicer(), server)
     server.add_insecure_port(f"[::]:{port}")
     server.start()
     log.info("SigmaRL gRPC server listening on port %d", port)
-    server.wait_for_termination()
+
+    # Signal the pump loop when the server shuts down
+    stop_event = threading.Event()
+    def _watch_server():
+        server.wait_for_termination()
+        stop_event.set()
+    threading.Thread(target=_watch_server, daemon=True).start()
+
+    # Main thread render pump — drains render jobs posted by gRPC workers
+    log.info("Main-thread render pump active")
+    while not stop_event.is_set():
+        try:
+            render_fn, result_q = render_queue.get(timeout=0.05)
+            result_q.put(render_fn())
+        except queue.Empty:
+            pass
 
 
 if __name__ == "__main__":

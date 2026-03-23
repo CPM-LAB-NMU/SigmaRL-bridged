@@ -61,6 +61,26 @@ class SigmaRLEnvStub(object):
                 request_serializer=sigmarl__env__pb2.StepRequest.SerializeToString,
                 response_deserializer=sigmarl__env__pb2.StepResponse.FromString,
                 _registered_method=True)
+        self.SetRenderMode = channel.unary_unary(
+                '/sigmarl.SigmaRLEnv/SetRenderMode',
+                request_serializer=sigmarl__env__pb2.SetRenderModeRequest.SerializeToString,
+                response_deserializer=sigmarl__env__pb2.Ack.FromString,
+                _registered_method=True)
+        self.SaveVideo = channel.unary_unary(
+                '/sigmarl.SigmaRLEnv/SaveVideo',
+                request_serializer=sigmarl__env__pb2.SaveVideoRequest.SerializeToString,
+                response_deserializer=sigmarl__env__pb2.Ack.FromString,
+                _registered_method=True)
+        self.ResetPhysical = channel.unary_unary(
+                '/sigmarl.SigmaRLEnv/ResetPhysical',
+                request_serializer=sigmarl__env__pb2.PhysicalResetRequest.SerializeToString,
+                response_deserializer=sigmarl__env__pb2.PhysicalStepResponse.FromString,
+                _registered_method=True)
+        self.StepPhysical = channel.unary_unary(
+                '/sigmarl.SigmaRLEnv/StepPhysical',
+                request_serializer=sigmarl__env__pb2.PhysicalStepRequest.SerializeToString,
+                response_deserializer=sigmarl__env__pb2.PhysicalStepResponse.FromString,
+                _registered_method=True)
         self.EvaluateWeights = channel.unary_unary(
                 '/sigmarl.SigmaRLEnv/EvaluateWeights',
                 request_serializer=sigmarl__env__pb2.EvaluateRequest.SerializeToString,
@@ -109,6 +129,37 @@ class SigmaRLEnvServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SetRenderMode(self, request, context):
+        """Toggle rendering on/off without rebuilding the environment.
+        Use this to arm rendering just for a replay episode after training.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SaveVideo(self, request, context):
+        """Save collected rgb_array frames to an MP4 file.
+        Only meaningful after SetRenderMode with mode="rgb_array".
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ResetPhysical(self, request, context):
+        """Physical interface: lab-frame state in, speed+curvature commands out.
+        Designed for student controllers and the rosbridge.
+        n_envs must be 1 when using this interface.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StepPhysical(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def EvaluateWeights(self, request, context):
         """EA mode: load a flat weight vector, run n_episodes, return fitness.
         Java owns the learning loop; Python just evaluates.
@@ -144,6 +195,26 @@ def add_SigmaRLEnvServicer_to_server(servicer, server):
                     servicer.Step,
                     request_deserializer=sigmarl__env__pb2.StepRequest.FromString,
                     response_serializer=sigmarl__env__pb2.StepResponse.SerializeToString,
+            ),
+            'SetRenderMode': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetRenderMode,
+                    request_deserializer=sigmarl__env__pb2.SetRenderModeRequest.FromString,
+                    response_serializer=sigmarl__env__pb2.Ack.SerializeToString,
+            ),
+            'SaveVideo': grpc.unary_unary_rpc_method_handler(
+                    servicer.SaveVideo,
+                    request_deserializer=sigmarl__env__pb2.SaveVideoRequest.FromString,
+                    response_serializer=sigmarl__env__pb2.Ack.SerializeToString,
+            ),
+            'ResetPhysical': grpc.unary_unary_rpc_method_handler(
+                    servicer.ResetPhysical,
+                    request_deserializer=sigmarl__env__pb2.PhysicalResetRequest.FromString,
+                    response_serializer=sigmarl__env__pb2.PhysicalStepResponse.SerializeToString,
+            ),
+            'StepPhysical': grpc.unary_unary_rpc_method_handler(
+                    servicer.StepPhysical,
+                    request_deserializer=sigmarl__env__pb2.PhysicalStepRequest.FromString,
+                    response_serializer=sigmarl__env__pb2.PhysicalStepResponse.SerializeToString,
             ),
             'EvaluateWeights': grpc.unary_unary_rpc_method_handler(
                     servicer.EvaluateWeights,
@@ -288,6 +359,114 @@ class SigmaRLEnv(object):
             '/sigmarl.SigmaRLEnv/Step',
             sigmarl__env__pb2.StepRequest.SerializeToString,
             sigmarl__env__pb2.StepResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SetRenderMode(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/sigmarl.SigmaRLEnv/SetRenderMode',
+            sigmarl__env__pb2.SetRenderModeRequest.SerializeToString,
+            sigmarl__env__pb2.Ack.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SaveVideo(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/sigmarl.SigmaRLEnv/SaveVideo',
+            sigmarl__env__pb2.SaveVideoRequest.SerializeToString,
+            sigmarl__env__pb2.Ack.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ResetPhysical(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/sigmarl.SigmaRLEnv/ResetPhysical',
+            sigmarl__env__pb2.PhysicalResetRequest.SerializeToString,
+            sigmarl__env__pb2.PhysicalStepResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StepPhysical(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/sigmarl.SigmaRLEnv/StepPhysical',
+            sigmarl__env__pb2.PhysicalStepRequest.SerializeToString,
+            sigmarl__env__pb2.PhysicalStepResponse.FromString,
             options,
             channel_credentials,
             insecure,

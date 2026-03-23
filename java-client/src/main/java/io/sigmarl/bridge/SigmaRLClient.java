@@ -6,6 +6,10 @@ import io.grpc.ManagedChannelBuilder;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+// Physical interface types (generated from proto)
+// VehicleStateMsg, VehicleCommandMsg, PhysicalStepRequest, PhysicalStepResponse,
+// PhysicalResetRequest are all in the io.sigmarl.bridge package (same as this class).
+
 /**
  * Thin wrapper around the generated gRPC stub.
  *
@@ -70,6 +74,25 @@ public class SigmaRLClient implements AutoCloseable {
                 .build();
     }
 
+    /**
+     * Like {@link #scenarioConfig} but also enables rendering.
+     *
+     * @param renderMode {@code "human"} for a live pygame window,
+     *                   {@code "rgb_array"} to collect frames for {@link #saveVideo}
+     */
+    public static ScenarioConfig scenarioConfig(
+            String scenarioType, int nAgents, int nEnvs, int maxSteps,
+            String device, String renderMode) {
+        return ScenarioConfig.newBuilder()
+                .setScenarioType(scenarioType)
+                .setNAgents(nAgents)
+                .setNEnvs(nEnvs)
+                .setMaxSteps(maxSteps)
+                .setDevice(device)
+                .setRenderMode(renderMode)
+                .build();
+    }
+
     // ---------------------------------------------------------------- reset
 
     public StepResponse reset() {
@@ -108,7 +131,74 @@ public class SigmaRLClient implements AutoCloseable {
         return stub.evaluateWeights(req.build());
     }
 
-    // ---------------------------------------------------------------- helpers
+    // ---------------------------------------------------------------- video / render
+
+    /**
+     * Toggle rendering without rebuilding the environment.
+     * Call this just before a replay episode to arm the renderer, and after to disarm it.
+     *
+     * @param mode {@code "human"} = live pygame window,
+     *             {@code "rgb_array"} = collect frames for {@link #saveVideo},
+     *             {@code ""} = off
+     */
+    public Ack setRenderMode(String mode) {
+        return stub.setRenderMode(SetRenderModeRequest.newBuilder().setMode(mode).build());
+    }
+
+    /**
+     * Flush frames collected during {@code rgb_array} rendering to an MP4 file.
+     *
+     * @param path destination path without extension; {@code .mp4} is appended by the server
+     */
+    public Ack saveVideo(String path) {
+        return stub.saveVideo(SaveVideoRequest.newBuilder().setPath(path).build());
+    }
+
+    // ---------------------------------------------------------------- physical interface
+
+    /**
+     * Reset the environment and return per-vehicle physical state in the lab
+     * coordinate frame: x [m], y [m], heading [rad], speed [m/s].
+     */
+    public PhysicalStepResponse resetPhysical() {
+        return stub.resetPhysical(PhysicalResetRequest.getDefaultInstance());
+    }
+
+    public PhysicalStepResponse resetPhysical(int seed) {
+        return stub.resetPhysical(PhysicalResetRequest.newBuilder().setSeed(seed).build());
+    }
+
+    /**
+     * Advance one timestep using per-vehicle speed + curvature commands.
+     *
+     * @param vehicleIds  vehicle indices (0-based), length n_agents
+     * @param speeds      desired speed per vehicle [m/s]
+     * @param curvatures  path curvature per vehicle [1/m]; positive = left turn
+     */
+    public PhysicalStepResponse stepPhysical(int[] vehicleIds, float[] speeds, float[] curvatures) {
+        PhysicalStepRequest.Builder req = PhysicalStepRequest.newBuilder();
+        for (int i = 0; i < vehicleIds.length; i++) {
+            req.addCommands(VehicleCommandMsg.newBuilder()
+                    .setVehicleId(vehicleIds[i])
+                    .setSpeed(speeds[i])
+                    .setCurvature(curvatures[i])
+                    .build());
+        }
+        return stub.stepPhysical(req.build());
+    }
+
+    /** Return the state for a specific agent from a PhysicalStepResponse. */
+    public static VehicleStateMsg agentState(PhysicalStepResponse resp, int agentIdx) {
+        return resp.getStates(agentIdx);
+    }
+
+    /** True if any environment in the batch is done. */
+    public static boolean anyDonePhysical(PhysicalStepResponse resp) {
+        for (boolean d : resp.getDonesList()) if (d) return true;
+        return false;
+    }
+
+    // ---------------------------------------------------------------- helpers (ML interface)
 
     /**
      * Extract the observation for a specific (env, agent) pair from a flat

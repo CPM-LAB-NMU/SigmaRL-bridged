@@ -1,36 +1,32 @@
 package io.sigmarl.bridge.example;
 
+import io.sigmarl.bridge.PhysicalStepResponse;
 import io.sigmarl.bridge.ScenarioConfig;
 import io.sigmarl.bridge.SigmaRLClient;
 import io.sigmarl.bridge.SpacesInfo;
-import io.sigmarl.bridge.StepResponse;
+import io.sigmarl.bridge.VehicleStateMsg;
 
 import java.util.Arrays;
 import java.util.Random;
 
 /**
- * Evolutionary Robotics demo: Java defines and runs the neural network;
- * Python provides the multi-agent driving environment.
+ * Evolutionary Robotics demo using the <b>physical state interface</b>.
  *
- * <p>This is the key difference from {@link ExampleEA}:
- * <ul>
- *   <li>{@link ExampleEA} sends weight vectors to Python and lets Python run
- *       the forward pass inside {@code EvaluateWeights}.</li>
- *   <li>This demo uses {@code Reset}/{@code Step} so the <b>Java network does
- *       every forward pass</b>. The architecture is fully under Java control
- *       and can be swapped for DL4J, ONNX Runtime, etc.</li>
- * </ul>
+ * <p>Students implement every component from scratch:
+ * <ol>
+ *   <li><b>Neural network</b> — takes interpretable physical state per agent
+ *       ({@code x, y, heading, speed}) and outputs a driving command
+ *       ({@code speed, curvature}).  No opaque observation tensors.</li>
+ *   <li><b>Evolutionary algorithm</b> — (μ, λ)-ES with Gaussian mutation.</li>
+ *   <li><b>Fitness function</b> — total reward accumulated across all agents.
+ *       Change {@link #computeFitness} to use any combination of the physical
+ *       state signals returned by {@code StepPhysical}.</li>
+ * </ol>
  *
- * <p>Algorithm: simple (μ, λ)-ES with Gaussian mutation.
- * <pre>
- *   for each generation:
- *     for each individual in population:
- *       load weights into Java network
- *       run one episode via Reset / Step
- *       record total reward as fitness
- *     select top-μ survivors
- *     generate λ offspring by mutating survivors
- * </pre>
+ * <p>The Python server acts purely as a physics simulator.  It returns
+ * per-vehicle lab-frame state ({@code x, y, heading, speed}) and advances the
+ * world when given speed + curvature commands — exactly the same interface a
+ * student's rosbridge would use against real hardware.
  *
  * <p>Run with the Python server active:
  * <pre>
@@ -46,41 +42,66 @@ public class ExampleEvolutionaryRobotics {
     private static final int    SURVIVORS    = 5;    // μ — parents selected each gen
     private static final int    GENERATIONS  = 50;
     private static final double MUTATION_STD = 0.05; // Gaussian noise σ
-    private static final int    HIDDEN_DIM   = 64;   // Java network hidden layer size
+    private static final int    HIDDEN_DIM   = 64;
     private static final int    LOG_EVERY    = 5;
 
+    // ── Physical state / command dimensions ───────────────────────────────
+    // Each agent's input: [x, y, heading, speed]
+    private static final int STATE_DIM  = 4;
+    // Each agent's output: [speed, curvature]
+    private static final int ACTION_DIM = 2;
+
+    // Physical command bounds for this vehicle (CPM lab miniature cars).
+    // speed    ∈ [MIN_SPEED,  MAX_SPEED]  m/s
+    // curvature∈ [-MAX_CURV,  MAX_CURV]   1/m  (positive = left turn)
+    //   derived from max steering angle (31°) and wheelbase (0.15 m):
+    //   max_curv = tan(31° * π/180) / 0.15 ≈ 4.0 m⁻¹
+    private static final float MIN_SPEED = -0.5f;
+    private static final float MAX_SPEED =  1.0f;
+    private static final float MAX_CURV  =  4.0f;
+
     public static void main(String[] args) throws Exception {
-        String host = args.length > 0 ? args[0] : "localhost";
-        int    port = args.length > 1 ? Integer.parseInt(args[1]) : 50051;
+        // Usage: [host] [port] [--render | --save-video PATH]
+        //   --render          open a live pygame window while the best individual runs
+        //   --save-video PATH save a video of the best individual to PATH.mp4
+        String host       = "localhost";
+        int    port       = 50051;
+        String renderMode = "";       // "" | "human" | "rgb_array"
+        String videoPath  = null;
+
+        for (int i = 0; i < args.length; i++) {
+            switch (args[i]) {
+                case "--render":      renderMode = "human";      break;
+                case "--save-video":  renderMode = "rgb_array";
+                                      videoPath  = args[++i];   break;
+                default:
+                    if (i == 0) host = args[i];
+                    else if (i == 1) port = Integer.parseInt(args[i]);
+            }
+        }
 
         try (SigmaRLClient client = new SigmaRLClient(host, port)) {
 
-            // Configure scenario
+            // Configure scenario — no render_mode here so training runs at full speed.
+            // Rendering is armed only for the final replay via setRenderMode().
             ScenarioConfig cfg = SigmaRLClient.scenarioConfig(
                     "intersection_1", 4, /*n_envs=*/1, /*max_steps=*/128, "cpu");
             client.configure(cfg);
 
             SpacesInfo spaces = client.getSpaces();
-            int nAgents   = spaces.getNAgents();
-            int obsDim    = spaces.getObsDim();
-            int actionDim = spaces.getActionDim();
+            int nAgents = spaces.getNAgents();
 
             System.out.printf(
-                    "Environment: %d agents | obs_dim=%d | action_dim=%d%n",
-                    nAgents, obsDim, actionDim);
+                    "Environment: %d agents | state_dim=%d | action_dim=%d%n",
+                    nAgents, STATE_DIM, ACTION_DIM);
             System.out.printf(
-                    "Network: %d -> %d -> %d (per agent, shared weights)%n%n",
-                    obsDim, HIDDEN_DIM, actionDim);
+                    "Network per agent: %d -> %d -> %d%n%n",
+                    STATE_DIM, HIDDEN_DIM, ACTION_DIM);
 
-            // Read the actual physical action bounds from the environment
-            float[] actionLow  = toFloatArray(spaces.getActionLowList());
-            float[] actionHigh = toFloatArray(spaces.getActionHighList());
+            Random rng  = new Random(42);
+            Network net = new Network(STATE_DIM, ACTION_DIM, HIDDEN_DIM);
 
-            Random rng = new Random(42);
-            Network net = new Network(obsDim, actionDim, HIDDEN_DIM, actionLow, actionHigh);
-
-            // Initialise population as flat weight vectors
-            int nWeights = net.weightCount();
+            int     nWeights  = net.weightCount();
             float[][] population = randomPopulation(POPULATION, nWeights, rng);
             float[]   fitness    = new float[POPULATION];
 
@@ -89,11 +110,11 @@ public class ExampleEvolutionaryRobotics {
                 // ── evaluate each individual ─────────────────────────────
                 for (int i = 0; i < POPULATION; i++) {
                     net.loadWeights(population[i]);
-                    fitness[i] = runEpisode(client, net, nAgents, actionDim);
+                    fitness[i] = runEpisode(client, net, nAgents);
                 }
 
                 // ── report ───────────────────────────────────────────────
-                int[] ranking = argsort(fitness);  // ascending
+                int[] ranking = argsort(fitness);
                 float best = fitness[ranking[POPULATION - 1]];
                 float mean = mean(fitness);
 
@@ -118,33 +139,87 @@ public class ExampleEvolutionaryRobotics {
             }
 
             System.out.println("\nEvolution complete.");
+
+            // ── optional: replay best individual with rendering ───────────
+            if (!renderMode.isEmpty()) {
+                int[] ranking = argsort(fitness);
+                net.loadWeights(population[ranking[POPULATION - 1]]);
+                System.out.printf("%nReplaying best individual (fitness=%.3f) ...%n",
+                        fitness[ranking[POPULATION - 1]]);
+                client.setRenderMode(renderMode);   // arm renderer for this episode only
+                runEpisode(client, net, nAgents);
+                client.setRenderMode("");            // disarm
+                if ("rgb_array".equals(renderMode) && videoPath != null) {
+                    client.saveVideo(videoPath);
+                    System.out.println("Video saved to " + videoPath + ".mp4");
+                }
+            }
         }
     }
 
-    // ── Episode rollout (Java runs the forward pass) ──────────────────────
+    // ── Episode rollout ───────────────────────────────────────────────────
 
-    private static float runEpisode(
-            SigmaRLClient client, Network net, int nAgents, int actionDim) {
+    private static float runEpisode(SigmaRLClient client, Network net, int nAgents) {
+        PhysicalStepResponse state = client.resetPhysical();
+        float totalFitness = 0f;
 
-        StepResponse state = client.reset();
-        float totalReward  = 0f;
-
-        while (!SigmaRLClient.anyDone(state)) {
-            float[] actions = new float[nAgents * actionDim];
-            for (int a = 0; a < nAgents; a++) {
-                float[] obs    = SigmaRLClient.agentObs(state, /*env=*/0, a);
-                float[] action = net.forward(obs);
-                System.arraycopy(action, 0, actions, a * actionDim, actionDim);
-            }
-
-            StepResponse next = client.step(actions);
+        while (!SigmaRLClient.anyDonePhysical(state)) {
+            int[]   ids        = new int[nAgents];
+            float[] speeds     = new float[nAgents];
+            float[] curvatures = new float[nAgents];
 
             for (int a = 0; a < nAgents; a++) {
-                totalReward += SigmaRLClient.agentReward(next, 0, a);
+                VehicleStateMsg s = SigmaRLClient.agentState(state, a);
+
+                // Build the physical input vector — fully interpretable
+                float[] input = {
+                    (float) s.getX(),
+                    (float) s.getY(),
+                    (float) s.getHeading(),
+                    (float) s.getSpeed()
+                };
+
+                float[] action = net.forward(input);  // [speed, curvature]
+
+                ids[a]        = s.getVehicleId();
+                speeds[a]     = action[0];
+                curvatures[a] = action[1];
             }
+
+            PhysicalStepResponse next = client.stepPhysical(ids, speeds, curvatures);
+
+            // ── fitness function (students define this) ───────────────────
+            // Currently: sum the speed of all agents as a proxy for progress.
+            // Replace with any combination of x, y, heading, speed you want.
+            totalFitness += computeFitness(next, nAgents);
+
             state = next;
         }
-        return totalReward;
+        return totalFitness;
+    }
+
+    /**
+     * Fitness contribution from one timestep.
+     *
+     * <p>This is the method students are meant to customise.  The
+     * {@code PhysicalStepResponse} gives the full lab-frame state of every
+     * agent — position, heading, speed — at each timestep.
+     *
+     * <p>Example alternatives:
+     * <ul>
+     *   <li>Maximise average speed: {@code state.getSpeed()}</li>
+     *   <li>Penalise deviations from a target position</li>
+     *   <li>Count steps without leaving a bounding box</li>
+     *   <li>Minimise energy: {@code -Math.abs(speed)}</li>
+     * </ul>
+     */
+    private static float computeFitness(PhysicalStepResponse resp, int nAgents) {
+        float contribution = 0f;
+        for (int a = 0; a < nAgents; a++) {
+            VehicleStateMsg s = SigmaRLClient.agentState(resp, a);
+            contribution += s.getSpeed();  // reward forward progress
+        }
+        return contribution;
     }
 
     // ── ES helpers ────────────────────────────────────────────────────────
@@ -167,7 +242,6 @@ public class ExampleEvolutionaryRobotics {
         return w;
     }
 
-    /** Returns indices that would sort {@code arr} ascending. */
     private static int[] argsort(float[] arr) {
         Integer[] idx = new Integer[arr.length];
         for (int i = 0; i < idx.length; i++) idx[i] = i;
@@ -185,26 +259,30 @@ public class ExampleEvolutionaryRobotics {
 
     // ── Neural network (fully in Java) ────────────────────────────────────
     //
-    // Single hidden layer: obs_dim -> tanh -> hidden_dim -> tanh -> action_dim
+    // Single hidden layer:
+    //   input  (STATE_DIM=4): [x, y, heading, speed]  — physical lab-frame state
+    //   hidden (HIDDEN_DIM):  tanh activations
+    //   output (ACTION_DIM=2): [speed, curvature]      — physical driving command
     //
-    // Swap this class for a DL4J MultiLayerNetwork, an ONNX Runtime session,
-    // or any other Java-based model — the EA loop above is unchanged.
+    // Output is scaled from tanh range (-1, 1) to the physical command bounds
+    // defined by MIN_SPEED/MAX_SPEED and ±MAX_CURV.
+    //
+    // Swap this class for any other Java-based model — the EA loop is unchanged.
 
     static class Network {
         private final int     inputDim, hiddenDim, outputDim;
-        private final float[] actionLow, actionHigh;  // physical bounds from env
-        private float[]       weights;                // flat: [W1 | b1 | W2 | b2]
+        private float[]       weights;  // flat: [W1 | b1 | W2 | b2]
 
-        // offsets into the flat weight vector
         private final int offW1, offB1, offW2, offB2;
 
-        Network(int inputDim, int outputDim, int hiddenDim,
-                float[] actionLow, float[] actionHigh) {
-            this.inputDim   = inputDim;
-            this.hiddenDim  = hiddenDim;
-            this.outputDim  = outputDim;
-            this.actionLow  = actionLow;
-            this.actionHigh = actionHigh;
+        // Physical command bounds for the two output neurons
+        private static final float[] OUT_LOW  = { MIN_SPEED, -MAX_CURV };
+        private static final float[] OUT_HIGH = { MAX_SPEED,  MAX_CURV };
+
+        Network(int inputDim, int outputDim, int hiddenDim) {
+            this.inputDim  = inputDim;
+            this.hiddenDim = hiddenDim;
+            this.outputDim = outputDim;
 
             offW1 = 0;
             offB1 = offW1 + hiddenDim * inputDim;
@@ -215,32 +293,26 @@ public class ExampleEvolutionaryRobotics {
         }
 
         int weightCount() {
-            return hiddenDim * inputDim   // W1
-                 + hiddenDim             // b1
-                 + outputDim * hiddenDim // W2
-                 + outputDim;            // b2
+            return hiddenDim * inputDim    // W1
+                 + hiddenDim              // b1
+                 + outputDim * hiddenDim  // W2
+                 + outputDim;             // b2
         }
 
-        void loadWeights(float[] w) {
-            this.weights = w;
-        }
+        void loadWeights(float[] w) { this.weights = w; }
 
-        float[] getWeights() {
-            return weights.clone();
-        }
-
-        float[] forward(float[] obs) {
+        float[] forward(float[] state) {
             // Hidden layer
             float[] hidden = new float[hiddenDim];
             for (int h = 0; h < hiddenDim; h++) {
                 float sum = weights[offB1 + h];
                 for (int i = 0; i < inputDim; i++) {
-                    sum += weights[offW1 + h * inputDim + i] * obs[i];
+                    sum += weights[offW1 + h * inputDim + i] * state[i];
                 }
                 hidden[h] = (float) Math.tanh(sum);
             }
 
-            // Output layer — tanh in (-1, 1) then scaled to physical action bounds
+            // Output layer — scale tanh(-1,1) to physical command range
             float[] out = new float[outputDim];
             for (int o = 0; o < outputDim; o++) {
                 float sum = weights[offB2 + o];
@@ -248,16 +320,9 @@ public class ExampleEvolutionaryRobotics {
                     sum += weights[offW2 + o * hiddenDim + h] * hidden[h];
                 }
                 float t = (float) Math.tanh(sum);  // in (-1, 1)
-                // scale to [actionLow[o], actionHigh[o]]
-                out[o] = actionLow[o] + (t + 1f) * 0.5f * (actionHigh[o] - actionLow[o]);
+                out[o] = OUT_LOW[o] + (t + 1f) * 0.5f * (OUT_HIGH[o] - OUT_LOW[o]);
             }
             return out;
         }
-    }
-
-    private static float[] toFloatArray(java.util.List<Float> list) {
-        float[] arr = new float[list.size()];
-        for (int i = 0; i < arr.length; i++) arr[i] = list.get(i);
-        return arr;
     }
 }
