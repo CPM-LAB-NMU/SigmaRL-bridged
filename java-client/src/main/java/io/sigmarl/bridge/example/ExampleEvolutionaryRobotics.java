@@ -227,7 +227,7 @@ public class ExampleEvolutionaryRobotics {
         return arr;
     }
 
-    // ── Neural network (fully in Java) ────────────────────────────────────
+    // ── Neural network  ────────────────────────────────────
     //
     // Single hidden layer:
     //   input  (obs_dim):    the full simulator observation per agent

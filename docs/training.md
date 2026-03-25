@@ -8,7 +8,7 @@ This document explains how the Java example programs train neural network contro
 
 Training follows the standard **neuroevolution** loop: a population of neural networks is evaluated by running episodes in the simulator, the best-performing networks are selected as parents, and the next generation is produced by mutating (and optionally recombining) the parents' weights.
 
-**Java owns the entire learning algorithm.** The Python server is a pure black-box simulator: Java sends actions, Python advances the physics and returns the next observation and reward. Java never calls PyTorch or imports any ML library.
+**The entire learning algorithm is implemented in Java.** The Python server is a pure black-box simulator: Java sends actions, Python advances the physics and returns the next observation and reward. Java never calls PyTorch or imports any ML library.
 
 ---
 
