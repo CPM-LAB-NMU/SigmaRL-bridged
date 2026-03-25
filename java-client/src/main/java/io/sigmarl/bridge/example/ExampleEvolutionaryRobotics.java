@@ -167,13 +167,14 @@ public class ExampleEvolutionaryRobotics {
                 for (int a = 0; a < nAgents; a++) {
                     // Per-agent observation slice from StepResponse.observations
                     // (shape: [n_envs * n_agents * obs_dim], row-major).
-                    // Typical content (default bridge config):
+                    // Default content (is_obs_steering=false by default):
                     //   [self] forward speed, short-term ref path points,
                     //          distance to center line, distance to left/right boundary
+                    //          NOTE: steering angle NOT observed by default — enable
+                    //          is_obs_steering=true in config if learning steering is critical
                     //   [others] nearest-neighbor geometry (vertices), velocities,
                     //            distance-to-agent
-                    // Optional fields depend on scenario flags (e.g., steering,
-                    // other-agents' ref paths).
+                    // Optional: steering angle per agent, other-agents' ref paths (config-dependent).
                     float[] obs    = SigmaRLClient.agentObs(state, env, a);
                     float[] action = net.forward(obs);
                     System.arraycopy(action, 0, actions,
@@ -247,9 +248,9 @@ public class ExampleEvolutionaryRobotics {
         // ego_view=true, partial_observation=true, n_nearing_agents_observed=2,
         // n_points_short_term=3, observe_vertices=true,
         // observe_distance_to_agents=true, observe_distance_to_boundaries=true,
-        // observe_distance_to_center_line=true.
+        // observe_distance_to_center_line=true, is_obs_steering=FALSE (critical!)
         if (obsDim == 32) {
-            System.out.println("  Default index map (obs_dim=32):");
+            System.out.println("  Default index map (obs_dim=32, is_obs_steering=false):");
             System.out.println("    [0]      ego forward speed");
             System.out.println("    [1..6]   ego short-term reference path (3 points x,y)");
             System.out.println("    [7]      ego distance to center line");
@@ -259,9 +260,17 @@ public class ExampleEvolutionaryRobotics {
             System.out.println("    [21..31] second nearest other agent features");
             System.out.println("    per other-agent block (11):");
             System.out.println("      vertices(8) + velocity_xy(2) + distance_to_ego(1)");
+            System.out.println("   ** WARNING: ego steering angle NOT in default obs. **");
+            System.out.println("   Enable is_obs_steering=true in ScenarioConfig for obs_dim=37.");
+        } else if (obsDim == 37) {
+            System.out.println("  Index map with steering enabled (obs_dim=37, is_obs_steering=true):");
+            System.out.println("    [0..9]   ego self-features + steering angle");
+            System.out.println("    [10..20] nearest other agent features");
+            System.out.println("    [21..31] second nearest other agent features");
+            System.out.println("    [32..36] third nearest if available");
         } else {
             System.out.println("  Layout is scenario/config dependent.");
-            System.out.println("  Use SigmaRL obs provider flags to derive exact field order.");
+            System.out.println("  Check is_obs_steering, is_observe_ref_path_other_agents, etc.");
         }
         System.out.println();
     }
@@ -270,14 +279,16 @@ public class ExampleEvolutionaryRobotics {
     //
     // Single hidden layer:
     //   input  (obs_dim):    the full simulator observation per agent.
-    //                        Relevant default fields include:
+    //                        Default bridge (obs_dim=32):
     //                        - ego forward speed (ego-frame x velocity)
     //                        - ego short-term reference path points
-    //                        - ego distance to center line
-    //                        - ego distance to left/right boundary
+    //                        - ego distance to center line & boundaries
     //                        - nearest-agent geometry/velocity/distance
+    //                        WARNING: ego steering angle NOT in default obs.
+    //                        Enable is_obs_steering=true if steering learning is critical.
     //   hidden (HIDDEN_DIM): tanh activations
-    //   output (action_dim): driving command, scaled to [actionLow, actionHigh]
+    //   output (action_dim): driving command [speed, steering_angle],
+    //                        scaled to [actionLow, actionHigh]
     //
     // Swap this class for any other Java-based model — the EA loop is unchanged.
 
