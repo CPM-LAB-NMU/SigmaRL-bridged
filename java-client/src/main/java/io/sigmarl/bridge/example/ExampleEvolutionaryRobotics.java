@@ -92,6 +92,8 @@ public class ExampleEvolutionaryRobotics {
                     "Network per agent: %d -> %d -> %d%n%n",
                     obsDim, HIDDEN_DIM, actionDim);
 
+            printObservationGuide(obsDim);
+
             Random rng = new Random(42);
             Network net = new Network(obsDim, actionDim, HIDDEN_DIM, actionLow, actionHigh);
 
@@ -163,7 +165,15 @@ public class ExampleEvolutionaryRobotics {
             float[] actions = new float[nEnvs * nAgents * actionDim];
             for (int env = 0; env < nEnvs; env++) {
                 for (int a = 0; a < nAgents; a++) {
-                    // Each agent's full observation from the simulator
+                    // Per-agent observation slice from StepResponse.observations
+                    // (shape: [n_envs * n_agents * obs_dim], row-major).
+                    // Typical content (default bridge config):
+                    //   [self] forward speed, short-term ref path points,
+                    //          distance to center line, distance to left/right boundary
+                    //   [others] nearest-neighbor geometry (vertices), velocities,
+                    //            distance-to-agent
+                    // Optional fields depend on scenario flags (e.g., steering,
+                    // other-agents' ref paths).
                     float[] obs    = SigmaRLClient.agentObs(state, env, a);
                     float[] action = net.forward(obs);
                     System.arraycopy(action, 0, actions,
@@ -227,10 +237,45 @@ public class ExampleEvolutionaryRobotics {
         return arr;
     }
 
+    private static void printObservationGuide(int obsDim) {
+        System.out.println("Observation guide:");
+        System.out.println("  obs = per-agent feature vector from Python scenario (not pixels)." );
+        System.out.println("  Includes ego dynamics/path context + nearby-agent context.");
+        System.out.printf ("  obs_dim reported by server: %d%n", obsDim);
+
+        // Default bridge config is typically 32 for intersection_1:
+        // ego_view=true, partial_observation=true, n_nearing_agents_observed=2,
+        // n_points_short_term=3, observe_vertices=true,
+        // observe_distance_to_agents=true, observe_distance_to_boundaries=true,
+        // observe_distance_to_center_line=true.
+        if (obsDim == 32) {
+            System.out.println("  Default index map (obs_dim=32):");
+            System.out.println("    [0]      ego forward speed");
+            System.out.println("    [1..6]   ego short-term reference path (3 points x,y)");
+            System.out.println("    [7]      ego distance to center line");
+            System.out.println("    [8]      ego distance to left boundary");
+            System.out.println("    [9]      ego distance to right boundary");
+            System.out.println("    [10..20] nearest other agent features");
+            System.out.println("    [21..31] second nearest other agent features");
+            System.out.println("    per other-agent block (11):");
+            System.out.println("      vertices(8) + velocity_xy(2) + distance_to_ego(1)");
+        } else {
+            System.out.println("  Layout is scenario/config dependent.");
+            System.out.println("  Use SigmaRL obs provider flags to derive exact field order.");
+        }
+        System.out.println();
+    }
+
     // ── Neural network  ────────────────────────────────────
     //
     // Single hidden layer:
-    //   input  (obs_dim):    the full simulator observation per agent
+    //   input  (obs_dim):    the full simulator observation per agent.
+    //                        Relevant default fields include:
+    //                        - ego forward speed (ego-frame x velocity)
+    //                        - ego short-term reference path points
+    //                        - ego distance to center line
+    //                        - ego distance to left/right boundary
+    //                        - nearest-agent geometry/velocity/distance
     //   hidden (HIDDEN_DIM): tanh activations
     //   output (action_dim): driving command, scaled to [actionLow, actionHigh]
     //
