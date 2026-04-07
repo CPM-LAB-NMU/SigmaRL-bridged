@@ -17,6 +17,12 @@ Java is the primary target, but the same server works for Python, C++, Rust, or 
 - [Quick Start](#quick-start)
   - [Evolutionary Algorithm (EA) mode](#evolutionary-algorithm-ea-mode)
   - [Step-by-step NN training mode](#step-by-step-nn-training-mode)
+- [Example Programs](#example-programs)
+  - [ExampleEvolutionaryRoboticsCustomFitness](#exampleevolutionaryroboticscustomfitness)
+  - [ExampleEvolutionaryRobotics](#exampleevolutionaryrobotics)
+  - [ExampleEA](#exampleea)
+  - [ExampleNNTrainer](#examplenntrainer)
+- [Observation Vector Reference](#observation-vector-reference)
 - [gRPC Service Reference](#grpc-service-reference)
   - [GetSpaces](#getspaces)
   - [GetWeightCount](#getweightcount)
@@ -94,8 +100,10 @@ SigmaRL-bridged/
 │   └── src/main/java/io/sigmarl/bridge/
 │       ├── SigmaRLClient.java     # Clean Java wrapper around the generated stub
 │       └── example/
-│           ├── ExampleEA.java         # Genetic algorithm using EvaluateWeights
-│           └── ExampleNNTrainer.java  # Step-by-step loop with placeholder network
+│           ├── ExampleEvolutionaryRoboticsCustomFitness.java  # ER — custom obs-based fitness (no agentReward)
+│           ├── ExampleEvolutionaryRobotics.java               # ER — (μ,λ)-ES using simulator reward
+│           ├── ExampleEA.java                                 # GA (elite + crossover), survival-time fitness
+│           └── ExampleNNTrainer.java                          # Step-by-step loop with placeholder network
 │
 ├── requirements_bridge.txt        # grpcio, grpcio-tools, protobuf
 └── scripts/generate_proto.sh      # Regenerates Python stubs from proto
@@ -192,6 +200,157 @@ try (SigmaRLClient client = new SigmaRLClient("localhost", 50051)) {
 ```
 
 See `ExampleNNTrainer.java` for a full skeleton with a placeholder single-hidden-layer network.
+
+---
+
+## Example Programs
+
+Four runnable examples are provided in `java-client/src/main/java/io/sigmarl/bridge/example/`. They share the same neural network architecture (single hidden layer, tanh, output scaled to action bounds) and differ only in the evolutionary algorithm and fitness function used.
+
+All examples follow the same startup sequence:
+
+```bash
+# Terminal 1 — start the Python sim server
+python -m sigmarl.bridge.server
+
+# Terminal 2 — run the Java example
+java -cp java-client/target/sigmarl-java-client-*.jar \
+     io.sigmarl.bridge.example.<ClassName>
+
+# Optional flags (all examples support these)
+#   --render              open a live pygame window for the final replay
+#   --save-video PATH     write the final replay to PATH.mp4
+```
+
+---
+
+### ExampleEvolutionaryRoboticsCustomFitness
+
+**The recommended starting point for students new to the framework.**
+
+Uses the simulator purely as a physics engine. The fitness function is written entirely in Java and reads the observation vector directly — `agentReward()` is never called. This makes the learning objective fully transparent and student-defined.
+
+| Property | Value |
+|---|---|
+| Algorithm | (μ, λ)-Evolution Strategy |
+| Fitness source | Observation vector only (`agentObs`) |
+| `agentReward()` called? | **No** |
+
+The fitness function `computeFitness(float[] obs, int obsDim)` has five terms, each corresponding to a component of the simulator's internal RL reward:
+
+| Term | Obs index | What it measures | RL reward analogue |
+|---|---|---|---|
+| Forward speed reward | `obs[0]` | Normalised ego forward speed | `reward_movement` + `reward_vel` |
+| Path deviation penalty | `obs[7]` | Distance from centre line | `penalty_deviate_from_ref_path` |
+| Left boundary penalty | `obs[8]` | Distance to left lane wall | `penalty_close_to_lanelets` |
+| Right boundary penalty | `obs[9]` | Distance to right lane wall | `penalty_close_to_lanelets` |
+| Agent proximity penalty | `obs[20]`, `obs[31]` | Distance to nearest two agents | `penalty_close_to_agents` |
+| Collision proxy | `obs[20] < 0.05` | Hard penalty near contact | `penalty_collide_other_agents` |
+
+Students can adjust the six weight constants (`W_SPEED`, `W_DEVIATION`, `W_BOUNDARY`, `W_PROXIMITY`, `W_COLLISION`, and `COLLISION_DIST`) at the top of the class, or replace the `softPenalty()` helper with an exponential to more closely match the RL formulation.
+
+```bash
+java -cp target/sigmarl-java-client-*.jar \
+     io.sigmarl.bridge.example.ExampleEvolutionaryRoboticsCustomFitness --render
+```
+
+---
+
+### ExampleEvolutionaryRobotics
+
+Same (μ, λ)-ES algorithm as above. Fitness is the **cumulative reward returned by the simulator** (`agentReward()`). Useful as a baseline to compare against the custom-fitness variant.
+
+| Property | Value |
+|---|---|
+| Algorithm | (μ, λ)-Evolution Strategy |
+| Fitness source | `SigmaRLClient.agentReward()` |
+| `agentReward()` called? | **Yes** |
+
+The observation vector is still used to compute actions (the neural network maps obs → action), but the fitness signal comes from the Python side. This is the standard neuroevolution setup where the simulator's reward acts as the fitness oracle.
+
+```bash
+java -cp target/sigmarl-java-client-*.jar \
+     io.sigmarl.bridge.example.ExampleEvolutionaryRobotics --render
+```
+
+---
+
+### ExampleEA
+
+A Genetic Algorithm (elite carry-over + uniform crossover + Gaussian mutation). Fitness is **survival time** — the number of timesteps completed before the episode ends. A perfect controller that avoids all collisions for all 128 steps scores the maximum.
+
+| Property | Value |
+|---|---|
+| Algorithm | Genetic Algorithm (elitism + crossover) |
+| Fitness source | Step count (student-defined) |
+| `agentReward()` called? | No |
+
+The `computeFitness(StepResponse)` method returns `1.0` per step. Students can replace it with any function of the `StepResponse`.
+
+```bash
+java -cp target/sigmarl-java-client-*.jar \
+     io.sigmarl.bridge.example.ExampleEA --render
+```
+
+---
+
+### ExampleNNTrainer
+
+A minimal step-by-step loop skeleton. No evolutionary algorithm — intended as a scaffold for students who want to implement their own training loop (e.g. policy gradients, CMA-ES, etc.).
+
+```bash
+java -cp target/sigmarl-java-client-*.jar \
+     io.sigmarl.bridge.example.ExampleNNTrainer
+```
+
+---
+
+## Observation Vector Reference
+
+The per-agent observation vector is returned by `SigmaRLClient.agentObs(state, envIdx, agentIdx)`. Its layout depends on the `ScenarioConfig` used. The default configuration (`intersection_1`, `is_obs_steering=false`, `n_nearing_agents_observed=2`) produces `obs_dim=32`.
+
+### Default layout (obs_dim = 32)
+
+All distance values are normalised by `lane_width × 3`. A value of `0.0` means "at the boundary / touching", and `0.33` corresponds to approximately one lane width of clearance.
+
+Speed is normalised by `max_speed`. A value of `1.0` is full speed in the forward direction.
+
+| Index | Quantity | Notes |
+|---|---|---|
+| `obs[0]` | Ego forward speed | Normalised by `max_speed`; positive = forward |
+| `obs[1]` | Ref path point 0, x | Look-ahead point, ego frame |
+| `obs[2]` | Ref path point 0, y | |
+| `obs[3]` | Ref path point 1, x | |
+| `obs[4]` | Ref path point 1, y | |
+| `obs[5]` | Ref path point 2, x | |
+| `obs[6]` | Ref path point 2, y | |
+| `obs[7]` | Distance to centre line | 0 = on path |
+| `obs[8]` | Distance to left boundary | 0 = at wall |
+| `obs[9]` | Distance to right boundary | 0 = at wall |
+| `obs[10..17]` | Nearest agent — 4 corner vertices (x, y each) | Ego frame |
+| `obs[18]` | Nearest agent — velocity x | Ego frame |
+| `obs[19]` | Nearest agent — velocity y | Ego frame |
+| `obs[20]` | Distance to nearest agent | 0 ≈ collision |
+| `obs[21..28]` | 2nd nearest agent — 4 corner vertices | Ego frame |
+| `obs[29]` | 2nd nearest agent — velocity x | |
+| `obs[30]` | 2nd nearest agent — velocity y | |
+| `obs[31]` | Distance to 2nd nearest agent | |
+
+### Enabling steering angle observation (obs_dim = 37)
+
+Add `.setIsObsSteering(true)` to the `ScenarioConfig` builder. Five additional features are inserted after `obs[9]`, shifting the other-agent blocks to start at `obs[15]` and `obs[26]`.
+
+> **Note:** Ego steering angle is **not** observed by default. If your neural network needs to learn smooth steering, enabling `is_obs_steering` provides direct feedback.
+
+### Per-other-agent block structure (11 values)
+
+Each other-agent block contains:
+```
+vertices[0..7]   — 4 corner (x, y) pairs in the ego vehicle's local frame
+vel_x            — velocity component x
+vel_y            — velocity component y
+dist_to_ego      — scalar distance (the proximity signal used in the fitness function)
+```
 
 ---
 
